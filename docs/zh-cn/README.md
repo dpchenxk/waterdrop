@@ -48,6 +48,7 @@ Databricks 开源的 Apache Spark 对于分布式数据处理来说是一个伟�
 * 海量数据处理能力
 * 模块化和插件化，易于扩展
 * 支持利用SQL做数据处理和聚合
+* Spark Structured Streaming
 * 支持Spark 2.x
 
 ## Waterdrop 的工作流程
@@ -117,6 +118,18 @@ Elasticsearch, File, Hdfs, Jdbc, Kafka, Mysql, S3, Stdout, 自行开发的Output
 ![永辉云创Logo](../images/yonghuiyunchuang-logo.png)
 
 Waterdrop 为永辉云创旗下新零售品牌永辉生活提供电商用户行为数据实时流式与离线SQL计算。
+
+* 水滴筹, 数据平台
+
+![水滴筹logo](../images/shuidichou-logo.jpg ':size=130%')
+
+水滴筹在Yarn上使用Waterdrop做实时流式以及定时的离线批处理，每天处理3～4T的数据量，最终将数据写入Clickhouse。
+
+* 浙江乐控信息科技有限公司
+
+![浙江乐控信息科技有限公司 logo](../images/zhejiang_lekong_xinxi_keji-logo.jpg ':size=130%')
+
+Watedrop 为浙江乐控信息科技有限公司旗下乐控智能提供物联网交互数据实时流sql分析(Structured Streaming 引擎)和离线数据分析。每天处理的数据量8千万到一亿条数据 最终数据落地到kafka和mysql数据库。
 
 * 其他公司 ... 期待您的加入，请联系微信: garyelephant
 
