@@ -12,16 +12,23 @@
 
 | name | type | required | default value |
 | --- | --- | --- | --- |
-| [source_field](#source_field-array) | array | yes | - |
-| [target_field](#target_field-array) | array | yes | - |
+| [source_field](#source_field-string) | array | yes | - |
+| [target_field](#target_field-string) | array | yes | - |
+| [common-options](#common-options-string)| string | no | - |
 
-##### source_field [array]
+
+##### source_field [string]
 
 需要重命名的字段
 
-##### target_field [array]
+##### target_field [string]
 
 变更之后的字段名
+
+##### common options [string]
+
+`Filter` 插件通用参数，详情参照 [Filter Plugin](/zh-cn/configuration/filter-plugin)
+
 
 ### Examples
 

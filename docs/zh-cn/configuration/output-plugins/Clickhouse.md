@@ -6,7 +6,7 @@
 
 ### Description
 
-通过[Clickhouse-jdbc](https://github.com/yandex/clickhouse-jdbc)输出数据到Clickhouse，需要提前创建对应的表结构
+通过 [Clickhouse-jdbc](https://github.com/yandex/clickhouse-jdbc) 将数据源按字段名对应，写入ClickHouse，需要提前创建对应的表结构
 
 ### Options
 
@@ -15,13 +15,14 @@
 | [bulk_size](#bulk_size-number) | number| no |20000|
 | [clickhouse.*](#clickhouse-string) | string| no ||
 | [database](#database-string) | string |yes|-|
-| [fields](#fields-array) | array | yes |-|
+| [fields](#fields-array) | array | no |-|
 | [host](#host-string) | string | yes |-|
 | [password](#password-string) | string | no |-|
 | [retry](#retry-number) | number| no |1|
 | [retry_codes](#password-array) | array | no |[ ]|
 | [table](#table-string) | string | yes |-|
 | [username](#username-string) | string | no |-|
+| [common-options](#common-options-string)| string | no | - |
 
 
 #### bulk_size [number]
@@ -34,7 +35,7 @@ ClickHouse database
 
 ##### fields [array]
 
-需要输出到ClickHouse的数据字段。
+需要输出到ClickHouse的数据字段，若不配置将会自动根据数据的Schema适配。
 
 ##### host [string]
 
@@ -68,6 +69,10 @@ ClickHouse用户用户名，仅当ClickHouse中开启权限时需要此字段
 
 指定参数的方式是在原参数名称上加上前缀"clickhouse."，如指定socket_timeout的方式是: clickhouse.socket_timeout = 50000。如果不指定这些非必须参数，它们将使用clickhouse-jdbc给出的默认值。
 
+##### common options [string]
+
+`Output` 插件通用参数，详情参照 [Output Plugin](/zh-cn/configuration/output-plugin)
+
 
 ### ClickHouse类型对照表
 
@@ -87,8 +92,10 @@ ClickHouse用户用户名，仅当ClickHouse中开启权限时需要此字段
 |Uint64| long| bigint()||
 |Float32| float| float()||
 |Float64| double| double()||
+|Decimal(P, S)| - | CAST(source AS DECIMAL(P, S)) |Decimal32(S), Decimal64(S), Decimal128(S)皆可使用|
 |Array(T)|-|-|
 |Nullable(T)|取决于T|取决于T||
+|LowCardinality(T)|取决于T|取决于T||
 
 
 ### Examples

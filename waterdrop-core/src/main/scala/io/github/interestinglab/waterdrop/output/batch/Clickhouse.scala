@@ -3,6 +3,7 @@ package io.github.interestinglab.waterdrop.output.batch
 import java.text.SimpleDateFormat
 import java.util
 import java.util.Properties
+import java.math.BigDecimal;
 
 import com.typesafe.config.{Config, ConfigFactory}
 import io.github.interestinglab.waterdrop.apis.BaseOutput
@@ -45,7 +46,7 @@ class Clickhouse extends BaseOutput {
 
   override def checkConfig(): (Boolean, String) = {
 
-    val requiredOptions = List("host", "table", "database", "fields")
+    val requiredOptions = List("host", "table", "database")
 
     val nonExistsOptions = requiredOptions.map(optionName => (optionName, config.hasPath(optionName))).filter { p =>
       val (optionName, exists) = p
@@ -90,16 +91,23 @@ class Clickhouse extends BaseOutput {
 
       this.table = config.getString("table")
       this.tableSchema = getClickHouseSchema(conn, table)
-      this.fields = config.getStringList("fields")
 
-      acceptedClickHouseSchema()
+      if (this.config.hasPath("fields")) {
+        this.fields = config.getStringList("fields")
+        acceptedClickHouseSchema()
+      } else {
+        (true, "")
+      }
+
     }
   }
 
   override def prepare(spark: SparkSession): Unit = {
 
-    this.initSQL = initPrepareSQL()
-    logInfo(this.initSQL)
+    if (config.hasPath("fields")) {
+      this.initSQL = initPrepareSQL()
+      logInfo(this.initSQL)
+    }
 
     val defaultConfig = ConfigFactory.parseMap(
       Map(
@@ -118,6 +126,11 @@ class Clickhouse extends BaseOutput {
     val dfFields = df.schema.fieldNames
     val bulkSize = config.getInt("bulk_size")
     val retry = config.getInt("retry")
+
+    if (!config.hasPath("fields")) {
+      fields = dfFields.toList
+      initSQL = initPrepareSQL()
+    }
     df.foreachPartition { iter =>
       val executorBalanced = new BalancedClickhouseDataSource(this.jdbcLink, this.properties)
       val executorConn = executorBalanced.getConnection.asInstanceOf[ClickHouseConnectionImpl]
@@ -142,7 +155,10 @@ class Clickhouse extends BaseOutput {
   private def execute(statement: ClickHousePreparedStatement, retry: Int): Unit = {
     val res = Try(statement.executeBatch())
     res match {
-      case Success(_) => logInfo("Insert into ClickHouse succeed")
+      case Success(_) => {
+        logInfo("Insert into ClickHouse succeed")
+        statement.close()
+      }
       case Failure(e: ClickHouseException) => {
         val errorCode = e.getErrorCode
         if (retryCodes.contains(errorCode)) {
@@ -151,12 +167,14 @@ class Clickhouse extends BaseOutput {
             execute(statement, retry - 1)
           } else {
             logError("Insert into ClickHouse failed and retry failed, drop this bulk.")
+            statement.close()
           }
         } else {
           throw e
         }
       }
       case Failure(e: ClickHouseUnknownException) => {
+        statement.close()
         throw e
       }
       case Failure(e: Exception) => {
@@ -223,6 +241,8 @@ class Clickhouse extends BaseOutput {
         statement.setLong(index + 1, 0)
       case "Float32" => statement.setFloat(index + 1, 0)
       case "Float64" => statement.setDouble(index + 1, 0)
+      case Clickhouse.lowCardinalityPattern(lowCardinalityType) =>
+        renderDefaultStatement(index, lowCardinalityType, statement)
       case Clickhouse.arrayPattern(_) => statement.setArray(index + 1, List())
       case Clickhouse.nullablePattern(nullFieldType) => renderNullStatement(index, nullFieldType, statement)
       case _ => statement.setString(index + 1, "")
@@ -246,22 +266,23 @@ class Clickhouse extends BaseOutput {
 
   private def renderBaseTypeStatement(
     index: Int,
-    field: String,
+    fieldIndex: Int,
     fieldType: String,
     item: Row,
     statement: ClickHousePreparedStatement): Unit = {
     fieldType match {
       case "DateTime" | "Date" | "String" =>
-        statement.setString(index + 1, item.getAs[String](field))
+        statement.setString(index + 1, item.getAs[String](fieldIndex))
       case "Int8" | "UInt8" | "Int16" | "UInt16" | "Int32" =>
-        statement.setInt(index + 1, item.getAs[Int](field))
+        statement.setInt(index + 1, item.getAs[Int](fieldIndex))
       case "UInt32" | "UInt64" | "Int64" =>
-        statement.setLong(index + 1, item.getAs[Long](field))
-      case "Float32" => statement.setFloat(index + 1, item.getAs[Float](field))
-      case "Float64" => statement.setDouble(index + 1, item.getAs[Double](field))
+        statement.setLong(index + 1, item.getAs[Long](fieldIndex))
+      case "Float32" => statement.setFloat(index + 1, item.getAs[Float](fieldIndex))
+      case "Float64" => statement.setDouble(index + 1, item.getAs[Double](fieldIndex))
       case Clickhouse.arrayPattern(_) =>
-        statement.setArray(index + 1, item.getAs[WrappedArray[AnyRef]](field))
-      case _ => statement.setString(index + 1, item.getAs[String](field))
+        statement.setArray(index + 1, item.getAs[WrappedArray[AnyRef]](fieldIndex))
+      case "Decimal" => statement.setBigDecimal(index + 1, item.getAs[BigDecimal](fieldIndex))
+      case _ => statement.setString(index + 1, item.getAs[String](fieldIndex))
     }
   }
 
@@ -274,16 +295,27 @@ class Clickhouse extends BaseOutput {
       val field = fields.get(i)
       val fieldType = tableSchema(field)
       if (dsFields.indexOf(field) == -1) {
+        // specified field does not existed in row.
         renderDefaultStatement(i, fieldType, statement)
       } else {
-        fieldType match {
-          case "String" | "DateTime" | "Date" | Clickhouse.arrayPattern(_) =>
-            renderBaseTypeStatement(i, field, fieldType, item, statement)
-          case Clickhouse.floatPattern(_) | Clickhouse.intPattern(_) | Clickhouse.uintPattern(_) =>
-            renderBaseTypeStatement(i, field, fieldType, item, statement)
-          case Clickhouse.nullablePattern(nullType) =>
-            renderBaseTypeStatement(i, field, nullType, item, statement)
-          case _ => statement.setString(i + 1, item.getAs[String](field))
+        val fieldIndex = item.fieldIndex(field)
+        if (item.isNullAt(fieldIndex)) {
+          // specified field is Null in row.
+          renderDefaultStatement(i, fieldType, statement)
+        } else {
+          fieldType match {
+            case "String" | "DateTime" | "Date" | Clickhouse.arrayPattern(_) =>
+              renderBaseTypeStatement(i, fieldIndex, fieldType, item, statement)
+            case Clickhouse.floatPattern(_) | Clickhouse.intPattern(_) | Clickhouse.uintPattern(_) =>
+              renderBaseTypeStatement(i, fieldIndex, fieldType, item, statement)
+            case Clickhouse.nullablePattern(dataType) =>
+              renderBaseTypeStatement(i, fieldIndex, dataType, item, statement)
+            case Clickhouse.lowCardinalityPattern(dataType) =>
+              renderBaseTypeStatement(i, fieldIndex, dataType, item, statement)
+            case Clickhouse.decimalPattern(_) =>
+              renderBaseTypeStatement(i, fieldIndex, "Decimal", item, statement)
+            case _ => statement.setString(i + 1, item.getAs[String](field))
+          }
         }
       }
     }
@@ -294,9 +326,11 @@ object Clickhouse {
 
   val arrayPattern: Regex = "(Array.*)".r
   val nullablePattern: Regex = "Nullable\\((.*)\\)".r
+  val lowCardinalityPattern: Regex = "LowCardinality\\((.*)\\)".r
   val intPattern: Regex = "(Int.*)".r
   val uintPattern: Regex = "(UInt.*)".r
   val floatPattern: Regex = "(Float.*)".r
+  val decimalPattern: Regex = "(Decimal.*)".r
 
   /**
    * Waterdrop support this clickhouse data type or not.
@@ -309,6 +343,10 @@ object Clickhouse {
       case "Date" | "DateTime" | "String" =>
         true
       case arrayPattern(_) | nullablePattern(_) | floatPattern(_) | intPattern(_) | uintPattern(_) =>
+        true
+      case lowCardinalityPattern(_) =>
+        true
+      case decimalPattern(_) =>
         true
       case _ =>
         false
